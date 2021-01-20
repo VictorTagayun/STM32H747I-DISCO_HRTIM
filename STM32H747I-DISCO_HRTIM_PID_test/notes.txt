@@ -1,0 +1,91 @@
+Project  : STM32H747I-DISCO_HRTIM_PID_test
+Purpose  : Use HRTIM to do PID
+Strategy : Use HRTIM to trigger ADC by DMA and calculate PID in HRTIM IT
+
+** default pins **
+
+** RCC **
+HSE = 25Mhz
+DIVM1-3 = /5
+DIVN1-3 = x192
+DIVP1-3 = /2
+DIVQ1-3 = /2
+DIVR1-3 = /2
+fracn1-3 = 0
+
+** HRTIM-D **
+disable SPI2
+reset PC2-3, PA11-12
+
+** HRTIM-A/D clock source **
+set HRTIM clk source from Tim2 to CPU1 clk
+
+** PMOD **
+PMOD1  = PA11 = HRTIM-D1
+PMOD3  = PC2  = ADC1-11 (single ended)
+PMOD11 = GPIOC6 (for debug)
+
+** GPIO **
+all init by M4 as outputs
+GPIOI12 = LED1 init by M4 can only be used by M4
+GPIOI13 = LED2 init by M4 can only be used by M4
+GPIOI14 = LED3 init by M7 can only be used by M7
+GPIOC06 = PMOD11 for debug, init by M7 can only be used by M7
+
+** DEBUG **
+enabled trace
+
+** LED1 **
+assign to M4
+toggle in main.c of M4
+
+** troubleshooting **
+main.c of M4 with LED toggle is not running
+RTC hang up on: MX_RTC_Init()->HAL_RTC_Init()->RTC_EnterInitMode()
+    while ((hrtc->Instance->ISR & RTC_ISR_INITF) == 0U)
+    {
+      if((HAL_GetTick()  - tickstart) > RTC_TIMEOUT_VALUE)
+      {
+        status = HAL_TIMEOUT;
+        hrtc->State = HAL_RTC_STATE_TIMEOUT;
+      }
+    }
+disable RTC
+hang on MX_SDMMC1_SD_Init()->HAL_SD_Init()->HAL_SD_InitCard()->SD_PowerON()->SDMMC_CmdGoIdleState()->SDMMC_GetCmdError()
+  do
+  {
+    if (count-- == 0U)
+    {
+      return SDMMC_ERROR_TIMEOUT;
+    }
+
+  }while(!__SDMMC_GET_FLAG(SDMMCx, SDMMC_FLAG_CMDSENT));
+disable MX_SDMMC1_SD_Init
+now OK!
+
+** HRTIM-D @ M7 **
+period = 9600
+enable CMP1 = 9600/2
+Output 1 set = period
+Output 1 reset = CMP1
+add in main.c (use hhrtim instead of hhrtim1) -> output ok
+	HAL_HRTIM_WaveformOutputStart(&hhrtim, HRTIM_OUTPUT_TD1 );
+	HAL_HRTIM_WaveformCountStart(&hhrtim, HRTIM_TIMERID_TIMER_D);
+add CMP3 for ADC trigger
+enable Interrupt, source = Timer Rep
+NVIC settings = Timer D global IT
+change HAL_HRTIM_WaveformCountStart(); to HAL_HRTIM_WaveformCountStart_IT();
+
+** ADC1-11 **
+Runtime Context on M4 & M7, init @ M7 
+note
+	cannot init @ M4 and calibrate & start DMA @ M7
+	cannot init @ M7 and calibrate & start DMA @ M4
+enable DMA, periph to MEM
+Conv Data mngmt mode = DMA circular
+External Trigger Conv Src = HRTIM Trigger Out1
+add HAL_ADCEx_Calibration_Start in M7 main.c
+add HAL_ADC_Start_DMA in M7 main.c
+
+** troubleshooting **
+cannot trigger ADC by HRTIM even by ADC IT and DMA_IT
